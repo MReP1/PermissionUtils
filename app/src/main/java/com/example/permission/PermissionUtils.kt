@@ -76,8 +76,7 @@ object PermissionUtils {
         activity: ComponentActivity,
         callback: PermissionsCallback
     ) {
-        // 根据 Manifest 声明的 requestLegacyExternalStorage，true -> R (30)，false -> Q (29)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // target api 28 及以上启用分区存储，使用 MediaStore 存媒体不需要权限。
             // target api 29 可以声明 requestLegacyExternalStorage 停用分区存储。
             // target api 30 及以上不再授予写入外部权限，强制执行分区存储。
