@@ -31,7 +31,7 @@ interface PermissionsCallback {
 
 object PermissionUtils {
 
-    private val mainCoroutineScope = CoroutineScope(Dispatchers.Main.immediate)
+    private val mainCoroutineScope = CoroutineScope(Dispatchers.Main)
 
     private val requestPermissionChannel = PermissionRequestChannelHolder(mainCoroutineScope)
 
