@@ -7,9 +7,12 @@ import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultCallback
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,23 +62,53 @@ object PermissionUtils {
         permissions: Set<String>,
         callback: PermissionsCallback
     ) {
-        if (checkPermissions(activity, permissions)) {
-            // invoke callback immediate in main thread.
-            mainCoroutineScope.launch(Dispatchers.Main.immediate) {
-                callback.onGranted()
-            }
-        } else {
+        if (!tryCheckPermissionsAndCallback(activity, permissions, callback)) {
             requestPermissionChannel.sendPermissionsRequest(
-                PermissionsRequest(activity, permissions, callback)
+                ActivityPermissionsRequest(activity, permissions, callback)
             )
         }
     }
 
     @JvmStatic
-    fun requestWriteMediaStorage(
-        activity: ComponentActivity,
+    fun requestPermissions(
+        fragment: Fragment,
+        permissions: Set<String>,
         callback: PermissionsCallback
     ) {
+        val context = fragment.context ?: return
+        if (!tryCheckPermissionsAndCallback(context, permissions, callback)) {
+            requestPermissionChannel.sendPermissionsRequest(
+                FragmentPermissionsRequest(fragment, permissions, callback)
+            )
+        }
+    }
+
+    @JvmStatic
+    private fun tryCheckPermissionsAndCallback(
+        context: Context,
+        permissions: Set<String>,
+        callback: PermissionsCallback
+    ): Boolean = checkPermissions(context, permissions).also { isGranted ->
+        if (isGranted) {
+            // invoke callback immediate in main thread.
+            mainCoroutineScope.launch(Dispatchers.Main.immediate) {
+                callback.onGranted()
+            }
+        }
+    }
+
+    @JvmStatic
+    fun requestWriteMediaStorage(
+        activity: ComponentActivity, callback: PermissionsCallback
+    ) = requestWriteMediaStorage(activity as Any, callback)
+
+    @JvmStatic
+    fun requestWriteMediaStorage(
+        fragment: Fragment, callback: PermissionsCallback
+    ) = requestWriteMediaStorage(fragment as Any, callback)
+
+    @JvmStatic
+    private fun requestWriteMediaStorage(any: Any, callback: PermissionsCallback) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // target api 28 及以上启用分区存储，使用 MediaStore 存媒体不需要权限。
             // target api 29 可以声明 requestLegacyExternalStorage 停用分区存储。
@@ -83,18 +116,31 @@ object PermissionUtils {
             callback.onGranted()
         } else {
             // target 27 及以下申请写入外部存取权限
-            requestPermissions(
-                activity = activity,
-                permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                callback = object : PermissionsCallback {
-                    override fun onGranted() = callback.onGranted()
-                    override fun onDenied(permissions: Set<String>) {
-                        callback.onDenied(permissions)
+            val permissionsCallback = object : PermissionsCallback {
+                override fun onGranted() = callback.onGranted()
+                override fun onDenied(permissions: Set<String>) {
+                    callback.onDenied(permissions)
 
-                        // Todo show guide to settings dialog.
-                    }
+                    // Todo show guide to settings dialog.
                 }
-            )
+            }
+            when (any) {
+                is ComponentActivity -> {
+                    requestPermissions(
+                        activity = any,
+                        permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                        callback = permissionsCallback
+                    )
+                }
+
+                is Fragment -> {
+                    requestPermissions(
+                        fragment = any,
+                        permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                        callback = permissionsCallback
+                    )
+                }
+            }
         }
     }
 
@@ -118,9 +164,53 @@ object PermissionUtils {
         )
     }
 
+    @JvmStatic
+    fun requestReadMediaStoragePermission(
+        fragment: Fragment,
+        type: MediaPermissionType,
+        callback: PermissionsCallback
+    ) {
+        requestPermissions(
+            fragment = fragment,
+            permissions = type.toPermissions(),
+            callback = object : PermissionsCallback {
+                override fun onGranted() = callback.onGranted()
+                override fun onDenied(permissions: Set<String>) {
+                    callback.onDenied(permissions)
+
+                    // Todo show guide to settings dialog.
+                }
+            }
+        )
+    }
+
 }
 
 /* ___ Kt inline common ___ */
+
+inline fun Fragment.withPermission(
+    permission: String,
+    crossinline onDenied: () -> Unit = {},
+    crossinline onGranted: () -> Unit
+) {
+    withPermissions(
+        setOf(permission),
+        onDenied = { onDenied() },
+        onAllGranted = onGranted
+    )
+}
+
+inline fun Fragment.withPermissions(
+    permissions: Set<String>,
+    crossinline onDenied: (Set<String>) -> Unit = {},
+    crossinline onAllGranted: () -> Unit
+) {
+    PermissionUtils.requestPermissions(this, permissions, object : PermissionsCallback {
+        override fun onGranted() = onAllGranted()
+        override fun onDenied(permissions: Set<String>) = onDenied(permissions)
+    })
+}
+
 
 inline fun ComponentActivity.withPermission(
     permission: String,
@@ -177,11 +267,19 @@ sealed class MediaPermissionType(private val mask: Int) {
 
 /* __ Implement __ */
 
-private class PermissionsRequest(
+sealed class PermissionsRequest
+
+private class ActivityPermissionsRequest(
     val activity: ComponentActivity,
     val permissions: Set<String>,
     val callback: PermissionsCallback
-)
+) : PermissionsRequest()
+
+private class FragmentPermissionsRequest(
+    val fragment: Fragment,
+    val permissions: Set<String>,
+    val callback: PermissionsCallback
+) : PermissionsRequest()
 
 // 一次性最多请求的权限数量
 private const val MAX_CHANNEL_CAPACITY = 32
@@ -194,7 +292,31 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
             onBufferOverflow = BufferOverflow.DROP_LATEST
         ).apply {
             consumeAsFlow()
-                .onEach(::dealWithPermissionRequest)
+                .onEach { request ->
+                    when (request) {
+                        is ActivityPermissionsRequest -> {
+                            if (request.activity.isDestroyed) return@onEach
+                            dealWithPermissionRequest(
+                                permissions = request.permissions,
+                                callback = request.callback,
+                                activityResultRegistry = request.activity.activityResultRegistry,
+                                lifecycle = request.activity.lifecycle
+                            )
+                        }
+
+                        is FragmentPermissionsRequest -> {
+                            if (request.fragment.isDetached) return@onEach
+                            val activity = request.fragment.activity
+                            if (activity == null || activity.isDestroyed) return@onEach
+                            dealWithPermissionRequest(
+                                permissions = request.permissions,
+                                callback = request.callback,
+                                activityResultRegistry = activity.activityResultRegistry,
+                                lifecycle = request.fragment.viewLifecycleOwner.lifecycle
+                            )
+                        }
+                    }
+                }
                 .launchIn(mainScope)
         }
     }
@@ -204,16 +326,20 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
         channel.trySendBlocking(request)
     }
 
-    private suspend fun dealWithPermissionRequest(request: PermissionsRequest) {
-        if (request.activity.isDestroyed) {
-            // The activity has been destroyed
+    private suspend fun dealWithPermissionRequest(
+        permissions: Set<String>,
+        callback: PermissionsCallback,
+        activityResultRegistry: ActivityResultRegistry,
+        lifecycle: Lifecycle
+    ) {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            // The lifecycle is destroyed
             // which means that requesting this permission is useless.
             return
         }
 
         // Only one permission can be requested at a time, so blocking here.
         suspendCancellableCoroutine { cont ->
-            val lifecycle = request.activity.lifecycle
             var launcher: ActivityResultLauncher<Array<String>>? = null
 
             // Unregister the permission request launcher and stop blocking flow when destroyed.
@@ -233,7 +359,7 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
             lifecycle.addObserver(observer)
 
             // Unregister the launcher and the lifecycle observer after getting the response.
-            val callback = ActivityResultCallback<Map<String, Boolean>> { map ->
+            val activityResultCallback = ActivityResultCallback<Map<String, Boolean>> { map ->
                 launcher?.apply {
                     unregister()
                     launcher = null
@@ -241,9 +367,9 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
                 }
                 val isAllPermissionsGranted = map.values.all { it }
                 if (isAllPermissionsGranted) {
-                    request.callback.onGranted()
+                    callback.onGranted()
                 } else {
-                    request.callback.onDenied(map.filterValues { !it }.keys)
+                    callback.onDenied(map.filterValues { !it }.keys)
                 }
                 if (cont.isActive) {
                     cont.resume(Unit)
@@ -251,12 +377,12 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
             }
 
             // real request permissions.
-            launcher = request.activity.activityResultRegistry.register(
+            launcher = activityResultRegistry.register(
                 UUID.randomUUID().toString(),
                 ActivityResultContracts.RequestMultiplePermissions(),
-                callback
+                activityResultCallback
             ).apply {
-                launch(request.permissions.toTypedArray())
+                launch(permissions.toTypedArray())
             }
         }
     }

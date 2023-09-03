@@ -52,6 +52,7 @@ android {
 
 dependencies {
     implementation(libs.core.ktx)
+    implementation(libs.androidx.appcompat)
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.activity.compose)
     implementation(platform(libs.compose.bom))
