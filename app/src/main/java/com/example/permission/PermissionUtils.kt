@@ -61,39 +61,23 @@ object PermissionUtils {
         activity: ComponentActivity,
         permissions: Set<String>,
         callback: PermissionsCallback
-    ) {
-        if (!tryCheckPermissionsAndCallback(activity, permissions, callback)) {
-            requestPermissionChannel.sendPermissionsRequest(
-                ActivityPermissionsRequest(activity, permissions, callback)
-            )
-        }
-    }
+    ) = requestPermissions(ActivityPermissionsRequest(activity, permissions, callback))
 
     @JvmStatic
     fun requestPermissions(
         fragment: Fragment,
         permissions: Set<String>,
         callback: PermissionsCallback
-    ) {
-        val context = fragment.context ?: return
-        if (!tryCheckPermissionsAndCallback(context, permissions, callback)) {
-            requestPermissionChannel.sendPermissionsRequest(
-                FragmentPermissionsRequest(fragment, permissions, callback)
-            )
-        }
-    }
+    ) = requestPermissions(FragmentPermissionsRequest(fragment, permissions, callback))
 
     @JvmStatic
-    private fun tryCheckPermissionsAndCallback(
-        context: Context,
-        permissions: Set<String>,
-        callback: PermissionsCallback
-    ): Boolean = checkPermissions(context, permissions).also { isGranted ->
-        if (isGranted) {
-            // invoke callback immediate in main thread.
-            mainCoroutineScope.launch(Dispatchers.Main.immediate) {
-                callback.onGranted()
-            }
+    private fun requestPermissions(
+        request: PermissionsRequest
+    ) {
+        if (checkPermissions(context = (request.context ?: return), request.permissions)) {
+            mainCoroutineScope.launch(Dispatchers.Main.immediate) { request.callback.onGranted() }
+        } else {
+            requestPermissionChannel.sendPermissionsRequest(request)
         }
     }
 
@@ -263,19 +247,28 @@ sealed class MediaPermissionType(private val mask: Int) {
 
 /* __ Implement __ */
 
-sealed class PermissionsRequest
+sealed class PermissionsRequest(
+    val permissions: Set<String>,
+    val callback: PermissionsCallback
+) {
+    abstract val context: Context?
+}
 
 private class ActivityPermissionsRequest(
     val activity: ComponentActivity,
-    val permissions: Set<String>,
-    val callback: PermissionsCallback
-) : PermissionsRequest()
+    permissions: Set<String>,
+    callback: PermissionsCallback
+) : PermissionsRequest(permissions, callback) {
+    override val context: Context get() = activity
+}
 
 private class FragmentPermissionsRequest(
     val fragment: Fragment,
-    val permissions: Set<String>,
-    val callback: PermissionsCallback
-) : PermissionsRequest()
+    permissions: Set<String>,
+    callback: PermissionsCallback
+) : PermissionsRequest(permissions, callback) {
+    override val context: Context? get() = fragment.context
+}
 
 // 一次性最多请求的权限数量
 private const val MAX_CHANNEL_CAPACITY = 32
