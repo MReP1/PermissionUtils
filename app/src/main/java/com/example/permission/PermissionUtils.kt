@@ -216,7 +216,7 @@ inline fun ComponentActivity.withPermissions(
 }
 
 /**
- * 读媒体权限类型，API 33 细分为 Images, Video, Audio 三个权限
+ * 读媒体权限类型
  */
 sealed class MediaPermissionType(private val mask: Int) {
 
@@ -234,6 +234,7 @@ sealed class MediaPermissionType(private val mask: Int) {
 
     internal fun toPermissions(): Set<String> {
         return buildSet {
+            // API 33 细分为 Images, Video, Audio 三个权限，否则为读外部存储权限
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (mask and 1 > 0) add(Manifest.permission.READ_MEDIA_IMAGES)
                 if (mask and 2 > 0) add(Manifest.permission.READ_MEDIA_VIDEO)
