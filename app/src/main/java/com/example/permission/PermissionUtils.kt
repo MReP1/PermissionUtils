@@ -105,6 +105,7 @@ object PermissionUtils {
             callback.onGranted()
         } else {
             // target 27 及以下申请写入外部存取权限
+            val permission = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             val permissionsCallback = object : PermissionsCallback {
                 override fun onGranted() = callback.onGranted()
                 override fun onDenied(permissions: Set<String>) {
@@ -113,7 +114,6 @@ object PermissionUtils {
                     // Todo show guide to settings dialog.
                 }
             }
-            val permission = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             when (any) {
                 is ComponentActivity -> requestPermissions(any, permission, permissionsCallback)
                 is Fragment -> requestPermissions(any, permission, permissionsCallback)
