@@ -125,21 +125,17 @@ object PermissionUtils {
                 }
             }
             when (any) {
-                is ComponentActivity -> {
-                    requestPermissions(
-                        activity = any,
-                        permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                        callback = permissionsCallback
-                    )
-                }
+                is ComponentActivity -> requestPermissions(
+                    activity = any,
+                    permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    callback = permissionsCallback
+                )
 
-                is Fragment -> {
-                    requestPermissions(
-                        fragment = any,
-                        permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                        callback = permissionsCallback
-                    )
-                }
+                is Fragment -> requestPermissions(
+                    fragment = any,
+                    permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    callback = permissionsCallback
+                )
             }
         }
     }
@@ -296,7 +292,7 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
                     when (request) {
                         is ActivityPermissionsRequest -> {
                             if (request.activity.isDestroyed) return@onEach
-                            dealWithPermissionRequest(
+                            requestPermissions(
                                 permissions = request.permissions,
                                 callback = request.callback,
                                 activityResultRegistry = request.activity.activityResultRegistry,
@@ -308,7 +304,7 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
                             if (request.fragment.isDetached) return@onEach
                             val activity = request.fragment.activity
                             if (activity == null || activity.isDestroyed) return@onEach
-                            dealWithPermissionRequest(
+                            requestPermissions(
                                 permissions = request.permissions,
                                 callback = request.callback,
                                 activityResultRegistry = activity.activityResultRegistry,
@@ -326,7 +322,7 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
         channel.trySendBlocking(request)
     }
 
-    private suspend fun dealWithPermissionRequest(
+    private suspend fun requestPermissions(
         permissions: Set<String>,
         callback: PermissionsCallback,
         activityResultRegistry: ActivityResultRegistry,
