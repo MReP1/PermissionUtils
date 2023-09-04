@@ -36,6 +36,7 @@ object PermissionUtils {
 
     private val mainCoroutineScope = CoroutineScope(Dispatchers.Main)
 
+    // 权限申请队列，确保同一时间只能进行一次权限申请。
     private val requestPermissionChannel = PermissionRequestChannelHolder(mainCoroutineScope)
 
     @JvmStatic
@@ -71,9 +72,7 @@ object PermissionUtils {
     ) = requestPermissions(FragmentPermissionsRequest(fragment, permissions, callback))
 
     @JvmStatic
-    private fun requestPermissions(
-        request: PermissionsRequest
-    ) {
+    private fun requestPermissions(request: PermissionsRequest) {
         if (checkPermissions(context = (request.context ?: return), request.permissions)) {
             mainCoroutineScope.launch(Dispatchers.Main.immediate) { request.callback.onGranted() }
         } else {
@@ -81,21 +80,27 @@ object PermissionUtils {
         }
     }
 
+    /**
+     * 申请写入媒体权限
+     *
+     * Android 10 及以上无需该权限，默认授权。但是需要通过 MediaStore 写入媒体。
+     */
     @JvmStatic
     fun requestWriteMediaStorage(
-        activity: ComponentActivity, callback: PermissionsCallback
+        activity: ComponentActivity,
+        callback: PermissionsCallback
     ) = requestWriteMediaStorage(activity as Any, callback)
 
     @JvmStatic
     fun requestWriteMediaStorage(
-        fragment: Fragment, callback: PermissionsCallback
+        fragment: Fragment,
+        callback: PermissionsCallback
     ) = requestWriteMediaStorage(fragment as Any, callback)
 
     @JvmStatic
     private fun requestWriteMediaStorage(any: Any, callback: PermissionsCallback) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // target api 28 及以上启用分区存储，使用 MediaStore 存媒体不需要权限。
-            // target api 29 可以声明 requestLegacyExternalStorage 停用分区存储。
+            // target api 29 及以上启用分区存储，使用 MediaStore 存媒体不需要权限。
             // target api 30 及以上不再授予写入外部权限，强制执行分区存储。
             callback.onGranted()
         } else {
@@ -108,60 +113,50 @@ object PermissionUtils {
                     // Todo show guide to settings dialog.
                 }
             }
+            val permission = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             when (any) {
-                is ComponentActivity -> requestPermissions(
-                    activity = any,
-                    permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                    callback = permissionsCallback
-                )
-
-                is Fragment -> requestPermissions(
-                    fragment = any,
-                    permissions = setOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                    callback = permissionsCallback
-                )
+                is ComponentActivity -> requestPermissions(any, permission, permissionsCallback)
+                is Fragment -> requestPermissions(any, permission, permissionsCallback)
             }
         }
     }
 
+    /**
+     * 申请读取媒体权限
+     *
+     * API 33 细分为 Images, Video, Audio 三个权限，API 33 以下申请读外部存储权限。
+     */
     @JvmStatic
     fun requestReadMediaStoragePermission(
         activity: ComponentActivity,
         type: MediaPermissionType,
         callback: PermissionsCallback
-    ) {
-        requestPermissions(
-            activity = activity,
-            permissions = type.toPermissions(),
-            callback = object : PermissionsCallback {
-                override fun onGranted() = callback.onGranted()
-                override fun onDenied(permissions: Set<String>) {
-                    callback.onDenied(permissions)
-
-                    // Todo show guide to settings dialog.
-                }
-            }
-        )
-    }
+    ) = requestReadMediaStoragePermission(activity as Any, type, callback)
 
     @JvmStatic
     fun requestReadMediaStoragePermission(
         fragment: Fragment,
         type: MediaPermissionType,
         callback: PermissionsCallback
-    ) {
-        requestPermissions(
-            fragment = fragment,
-            permissions = type.toPermissions(),
-            callback = object : PermissionsCallback {
-                override fun onGranted() = callback.onGranted()
-                override fun onDenied(permissions: Set<String>) {
-                    callback.onDenied(permissions)
+    ) = requestReadMediaStoragePermission(fragment as Any, type, callback)
 
-                    // Todo show guide to settings dialog.
-                }
+    @JvmStatic
+    private fun requestReadMediaStoragePermission(
+        any: Any, type: MediaPermissionType, callback: PermissionsCallback
+    ) {
+        val permissions = type.toPermissions()
+        val permissionsCallback = object : PermissionsCallback {
+            override fun onGranted() = callback.onGranted()
+            override fun onDenied(permissions: Set<String>) {
+                callback.onDenied(permissions)
+
+                // Todo show guide to settings dialog.
             }
-        )
+        }
+        when (any) {
+            is ComponentActivity -> requestPermissions(any, permissions, permissionsCallback)
+            is Fragment -> requestPermissions(any, permissions, permissionsCallback)
+        }
     }
 
 }
@@ -172,13 +167,7 @@ inline fun Fragment.withPermission(
     permission: String,
     crossinline onDenied: () -> Unit = {},
     crossinline onGranted: () -> Unit
-) {
-    withPermissions(
-        setOf(permission),
-        onDenied = { onDenied() },
-        onAllGranted = onGranted
-    )
-}
+) = withPermissions(setOf(permission), { onDenied() }, onGranted)
 
 inline fun Fragment.withPermissions(
     permissions: Set<String>,
@@ -191,18 +180,11 @@ inline fun Fragment.withPermissions(
     })
 }
 
-
 inline fun ComponentActivity.withPermission(
     permission: String,
     crossinline onDenied: () -> Unit = {},
     crossinline onGranted: () -> Unit
-) {
-    withPermissions(
-        setOf(permission),
-        onDenied = { onDenied() },
-        onAllGranted = onGranted
-    )
-}
+) = withPermissions(setOf(permission), { onDenied() }, onGranted)
 
 inline fun ComponentActivity.withPermissions(
     permissions: Set<String>,
@@ -234,7 +216,7 @@ sealed class MediaPermissionType(private val mask: Int) {
 
     internal fun toPermissions(): Set<String> {
         return buildSet {
-            // API 33 细分为 Images, Video, Audio 三个权限，否则为读外部存储权限
+            // API 33 细分为 Images, Video, Audio 三个权限，API 33 以下申请读外部存储权限
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (mask and 1 > 0) add(Manifest.permission.READ_MEDIA_IMAGES)
                 if (mask and 2 > 0) add(Manifest.permission.READ_MEDIA_VIDEO)
