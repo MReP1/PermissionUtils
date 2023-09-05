@@ -304,7 +304,7 @@ private class PermissionRequestChannelHolder(mainScope: CoroutineScope) {
         activityResultRegistry: ActivityResultRegistry,
         lifecycle: Lifecycle
     ) {
-        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.INITIALIZED)) {
             // The lifecycle is destroyed
             // which means that requesting this permission is useless.
             return
